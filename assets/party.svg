@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 360">
+  <rect width="480" height="360" fill="#ffd166"/>
+  <g transform="translate(240 250)">
+    <path d="M-70 0 C-70 -90 70 -90 70 0 L64 0 C64 -70 -64 -70 -64 0Z" fill="#e07a5f"/>
+    <path d="M-50 -10 Q-40 -6 -34 -12Q-26 -20 -20 -14" stroke="#e07a5f" stroke-width="10" fill="none" stroke-linecap="round"/>
+    <path d="M50 -10 Q40 -6 34 -12Q26 -20 20 -14" stroke="#e07a5f" stroke-width="10" fill="none" stroke-linecap="round"/>
+    <circle cx="-64" cy="-10" r="5" fill="#ffffff"/>
+    <circle cx="64" cy="-10" r="5" fill="#ffffff"/>
+    <path d="M-20 -24 Q0 -14 20 -24" stroke="#3d2c2e" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <circle cx="-28" cy="-44" r="5" fill="#3d2c2e"/>
+    <circle cx="28" cy="-44" r="5" fill="#3d2c2e"/>
+    <path d="M0 -30 q 8 -26 0 -44 q -8 18 0 44" fill="#f4a261"/>
+  </g>
+  <g transform="translate(96 286) scale(.55) rotate(-8 0 20)">
+    <path d="M-70 0 C-70 -90 70 -90 70 0 L64 0 C64 -70 -64 -70 -64 0Z" fill="#e76f51"/>
+    <circle cx="-28" cy="-44" r="5" fill="#3d2c2e"/><circle cx="28" cy="-44" r="5" fill="#3d2c2e"/>
+    <path d="M0 -30 q 8 -26 0 -44 q -8 18 0 44" fill="#f4a261"/>
+  </g>
+  <g transform="translate(384 252) scale(.6) rotate(6 0 20)">
+    <path d="M-70 0 C-70 -90 70 -90 70 0 L64 0 C64 -70 -64 -70 -64 0Z" fill="#f4a261"/>
+    <circle cx="-28" cy="-44" r="5" fill="#3d2c2e"/><circle cx="28" cy="-44" r="5" fill="#3d2c2e"/>
+  </g>
+  <text x="40" y="60" font-family="system-ui" font-size="26" font-weight="800" fill="#3d2c2e">party!</text>
+</svg>

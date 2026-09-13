@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AirGrab — Receiver</title>
+  <style>
+    :root { --paper: #fefbf4; --ink: #3d2c2e; --muted: rgba(61,44,46,.6); --green: #2e9e6b; --red: #e5484d; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font-family: system-ui, 'Segoe UI', sans-serif; }
+    header { padding: 18px 22px; border-bottom: 2px solid #e6d9c3; display: flex; align-items: baseline; gap: 10px; }
+    header h1 { margin: 0; font-size: 20px; }
+    header span { color: var(--muted); font-size: 12px; }
+    main { padding: 22px; max-width: 820px; margin: 0 auto; }
+
+    .led-row { display: flex; align-items: center; gap: 10px; font-size: 14px; margin-bottom: 18px; }
+    .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--ink); background: #d8d3c8; }
+    .dot.armed { background: var(--green); box-shadow: 0 0 0 4px rgba(46,158,107,.2); }
+    .dot.wait { background: var(--red); }
+    #status { font-weight: 800; text-transform: uppercase; letter-spacing: .3px; font-size: 12px; }
+
+    .panel { border: 2px solid #e6d9c3; border-radius: 14px; padding: 14px; margin-bottom: 16px; }
+    .panel h2 { margin: 0 0 10px; font-size: 14px; text-transform: uppercase; letter-spacing: .5px; }
+
+    button.act { font: inherit; font-weight: 800; border: 2px solid var(--ink); background: var(--paper); border-radius: 10px; padding: 8px 12px; cursor: pointer; width: 100%; }
+    button.act[disabled] { opacity: .5; cursor: default; }
+
+    .rstage { position: relative; border: 2px solid #e6d9c3; border-radius: 12px; overflow: hidden; background: #111; margin-top: 10px; display: none; }
+    .rstage video { width: 100%; display: block; transform: scaleX(-1); }
+    .rstage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .vision-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+    .chips { display: flex; gap: 8px; margin-top: 8px; }
+    .chip { padding: 4px 12px; border: 2px solid var(--ink); border-radius: 999px; font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: .3px; }
+    .chip.dim { opacity: .45; }
+    .chip.fist { background: var(--red); color: #fff; }
+    .chip.palm { background: var(--green); color: #fff; }
+
+    #preview { display: none; align-items: center; gap: 12px; border: 2px dashed var(--green); border-radius: 12px; padding: 12px; }
+    #preview.pulse { box-shadow: 0 0 0 6px rgba(46,158,107,.3); animation: pulse .7s ease-in-out infinite alternate; }
+    #preview img { width: 72px; height: 72px; object-fit: cover; border-radius: 10px; background: #fff; }
+    #preview b { display: block; font-size: 14px; }
+    #preview small { color: var(--muted); font-size: 12px; }
+    #preview .hint { font-size: 12px; font-weight: 800; margin-top: 6px; color: var(--green); }
+    @keyframes pulse { from { box-shadow: 0 0 0 6px rgba(46,158,107,.25); } to { box-shadow: 0 0 0 12px rgba(46,158,107,.05); } }
+
+    #progress { height: 8px; border: 1px solid var(--ink); border-radius: 999px; overflow: hidden; margin-top: 10px; display: none; }
+    #progress i { display: block; height: 100%; width: 0; background: var(--green); transition: width .1s; }
+
+    #gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+    .card { border: 2px solid #e6d9c3; border-radius: 12px; overflow: hidden; background: #fff; animation: pop .45s cubic-bezier(.2,1.4,.5,1); }
+    .card img { width: 100%; height: 120px; object-fit: cover; display: block; }
+    .card .meta { padding: 8px 10px; font-size: 12px; }
+    .card .meta b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .card .meta small { color: var(--muted); }
+    .card a { text-decoration: none; color: var(--green); font-weight: 800; }
+    @keyframes pop { from { transform: scale(.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+    #history { list-style: none; margin: 0; padding: 0; font-size: 12px; color: var(--muted); }
+    #history li { padding: 4px 0; border-bottom: 1px dashed #e6d9c3; }
+
+    #net-note { font-size: 13px; margin: 0; }
+    #net-note b { color: var(--green); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🛬 AirGrab — Receiver (laptop)</h1>
+    <span>open your fist over this camera = the drop</span>
+  </header>
+
+  <main>
+    <div class="led-row">
+      <div class="dot" id="dot"></div>
+      <span id="status">waiting for a sender…</span>
+    </div>
+
+    <div class="panel">
+      <h2>Receiver vision (the drop zone)</h2>
+      <button class="act" id="start">🖐 Start receiver camera</button>
+      <div class="rstage" id="stage">
+        <video id="cam" playsinline muted></video>
+        <canvas id="overlay" width="480" height="360"></canvas>
+      </div>
+      <div class="chips" id="chips" style="display:none">
+        <span class="chip dim" id="chip-state">gesture: —</span>
+      </div>
+      <p class="vision-note">
+        Camera off → the sender's own release drops it (same-computer demo).
+        Camera on → hold your closed fist over this webcam, then open it: that's the drop.
+      </p>
+    </div>
+
+    <div class="panel">
+      <h2>Network</h2>
+      <p id="net-note">Waiting for this network's sender to open its page…</p>
+    </div>
+
+    <div class="panel">
+      <h2>Incoming</h2>
+      <div id="preview">
+        <img id="preview-img" alt="" />
+        <div>
+          <b id="preview-name"></b>
+          <small id="preview-size"></small>
+          <div class="hint" id="preview-hint"></div>
+        </div>
+      </div>
+      <div id="incoming">nothing yet — open this page, then grab a photo on the sender.</div>
+      <div id="progress"><i></i></div>
+    </div>
+
+    <div class="panel">
+      <h2>Dropped</h2>
+      <div id="gallery"></div>
+    </div>
+
+    <div class="panel">
+      <h2>History</h2>
+      <ul id="history"></ul>
+    </div>
+  </main>
+
+  <script type="module">
+    import { initGestureSession, startCamera } from './src/gesture.js';
+    import { loadImage } from './src/payload.js';
+    import { createBroadcastTransport, createRelayTransport, joinChunks, ackMsg, dropMsg } from './src/transfer.js';
+    import { detectNetworkRoom, relayUrl } from './src/netid.js';
+    import { createReceiverInterlock } from './src/interlock.js';
+
+    const $ = (id) => document.getElementById(id);
+    const dot = $('dot'), statusEl = $('status'), incoming = $('incoming');
+    const gallery = $('gallery'), historyEl = $('history'), progress = $('progress');
+    const preview = $('preview'), previewImg = $('preview-img'), previewName = $('preview-name'), previewSize = $('preview-size'), previewHint = $('preview-hint');
+    const stage = $('stage'), rcam = $('cam'), roverlay = $('overlay'), chips = $('chips'), chipState = $('chip-state');
+
+    let modeCamera = false;      // receiver senses the drop (needs its camera on)
+    let session = null;
+    let previewUrl = null;
+    let incomingItem = null;
+
+    const fmt = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + ' MB' : n >= 1e3 ? (n / 1e3).toFixed(0) + ' KB' : n + ' B';
+
+    function toast(text, kind = '') {
+      const e = document.createElement('div');
+      e.style.cssText = 'position:fixed;bottom:14px;left:14px;max-width:340px;background:' + (kind === 'err' ? 'var(--red)' : 'var(--ink)') + ';color:var(--paper);border-radius:10px;padding:10px 12px;font-size:13px;font-weight:800;z-index:9';
+      e.textContent = text;
+      document.body.appendChild(e);
+      setTimeout(() => e.remove(), 3200);
+    }
+
+    const setStatus = (armed) => {
+      dot.classList.toggle('armed', armed);
+      dot.classList.toggle('wait', !armed);
+      statusEl.textContent = armed
+        ? (modeCamera
+            ? 'armed — bring the grab and open your fist over the camera'
+            : 'armed — open your fist on the SENDER to drop')
+        : 'waiting for a sender…';
+    };
+
+    function showPreview(p) {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      previewImg.style.display = p.preview ? 'block' : 'none';
+      if (p.preview) {
+        previewUrl = URL.createObjectURL(new Blob([p.preview], { type: p.previewMime || 'image/jpeg' }));
+        previewImg.src = previewUrl;
+      }
+      previewName.textContent = p.name;
+      previewSize.textContent = fmt(p.size);
+      previewHint.textContent = modeCamera
+        ? 'grab is here — close your fist over the camera, then open it to drop'
+        : 'grab is here — open your fist on the SENDER to send it';
+      preview.style.display = 'flex';
+      incoming.textContent = '';
+    }
+    function clearPreview() {
+      preview.style.display = 'none';
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      previewUrl = null;
+      if (session) session.viewer.setGhost(null);
+      incoming.textContent = 'nothing yet — open this page, then grab a photo on the sender.';
+    }
+
+    const rfsm = createReceiverInterlock({
+      onHolding: (p) => {
+        showPreview(p);
+        if (modeCamera && session) {
+          loadImage(URL.createObjectURL(new Blob([p.preview], { type: p.previewMime || 'image/jpeg' })))
+            .then((img) => session.viewer.setGhost(img))
+            .catch(() => {});
+        }
+      },
+      onDrop: (p) => {
+        sendToAll(dropMsg(p.id));
+        toast(`open fist sensed here — pulling ${p.name}`, 'ok');
+        incoming.textContent = `drop requested — receiving ${p.name}…`;
+      },
+      onDone: () => clearPreview(),
+    });
+
+    const routes = [];
+    const sendToAll = (msg) => { for (const r of routes) { try { r.send(msg); } catch { /* not open yet */ } } };
+    const bc = createBroadcastTransport('airgrab-demo');
+    routes.push(bc);
+    await bc.open('receiver', { onMessage });
+    announce();
+
+    function announce() {
+      sendToAll({ t: 'hello', side: 'receiver', camera: modeCamera });
+      sendToAll({ t: 'armed', ready: true, camera: modeCamera });
+    }
+
+    function onMessage(msg) {
+      if (msg.t === 'hello' || msg.t === 'armed') {
+        setStatus(true);
+        if (msg.t === 'hello') sendToAll({ t: 'armed', ready: true, camera: modeCamera });
+      } else if (msg.t === 'relay-roster') {
+        const n = (msg.peers || []).length;
+        $('net-note').innerHTML = n
+          ? `Sender online on this network (<b>${n}</b>) — grab on it, then open your fist over the camera.`
+          : "Waiting for this network's sender to open its page…";
+        if (n) setStatus(true);
+      } else if (msg.t === 'relay-closed') {
+        $('net-note').textContent = 'Network link lost — same-PC tabs still work.';
+      } else if (msg.t === 'holding') {
+        rfsm.holding(msg);
+      } else if (msg.t === 'nothing-held') {
+        if (rfsm.state !== 'idle') rfsm.done();
+        toast('sender has nothing held — grab first', 'err');
+      } else if (msg.t === 'transfer-start') {
+        incomingItem = { ...msg, parts: new Array(msg.parts), received: 0 };
+        progress.style.display = 'block';
+        progress.firstElementChild.style.width = '0';
+        incoming.textContent = `incoming: ${msg.name} (${fmt(msg.size)})…`;
+      } else if (msg.t === 'transfer-chunk') {
+        if (!incomingItem || incomingItem.id !== msg.id) return;
+        if (!incomingItem.parts[msg.i]) incomingItem.received++;
+        incomingItem.parts[msg.i] = msg.data;
+        progress.firstElementChild.style.width = Math.round((incomingItem.received / incomingItem.parts.length) * 100) + '%';
+      } else if (msg.t === 'transfer-end') {
+        const it = incomingItem;
+        if (!it || it.id !== msg.id) return;
+        addCard(it);
+        progress.style.display = 'none';
+        incomingItem = null;
+        sendToAll(ackMsg(it.id));
+        rfsm.done();
+        incoming.textContent = `delivered ${it.name} — waiting for the next grab`;
+      }
+    }
+
+    $('start').addEventListener('click', async () => {
+      try {
+        await startCamera(rcam);
+        stage.style.display = 'block';
+        chips.style.display = 'flex';
+        session = await initGestureSession({
+          video: rcam, canvas: roverlay,
+          wasmBase: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm',
+          modelPath: './models/hand_landmarker.task',
+          onStatus: () => {},
+          onState: (s) => {
+            chipState.textContent = `gesture: ${s || '—'}`;
+            chipState.className = 'chip' + (s === 'fist' ? ' fist' : s === 'palm' ? ' palm' : ' dim');
+            if (s === 'fist' && preview.style.display !== 'none') {
+              preview.classList.add('pulse');
+              if (rfsm.state === 'holding') previewHint.textContent = 'fist seen — now open it to drop!';
+            } else {
+              preview.classList.remove('pulse');
+            }
+          },
+          onEvent: (e) => {
+            if (e.type === 'grab') { /* fist closed over the laptop — visual only */ }
+            else if (e.type === 'release') {
+              if (rfsm.state !== 'idle') rfsm.cameraRelease();
+            }
+          },
+          onClassify: () => {},
+        });
+        session.start();
+        modeCamera = true;
+        announce();
+        $('start').disabled = true;
+        $('start').textContent = '🖐 receiver camera ON — you drop over here';
+        setStatus(dot.classList.contains('armed'));
+        toast('receiver camera on — the laptop now senses the drop', 'ok');
+      } catch (err) {
+        toast('receiver camera failed: ' + String(err).slice(0, 80), 'err');
+      }
+    });
+
+    // reuse rfsm's onDrop to (optionally) send drop — set above via createReceiverInterlock
+
+    function addCard(item) {
+      const url = URL.createObjectURL(new Blob([joinChunks(item.parts)], { type: item.mime }));
+      const card = document.createElement('div');
+      card.className = 'card';
+      const isImg = item.mime.startsWith('image/');
+      card.innerHTML = `
+        ${isImg ? `<img src="${url}" alt="${item.name}">` : '<div style="padding:10px">📄</div>'}
+        <div class="meta">
+          <b>${item.name}</b>
+          <small>${fmt(item.size)} · ${new Date().toLocaleTimeString()}</small><br>
+          <a href="${url}" download="${item.name}">save ⤓</a>
+        </div>`;
+      gallery.prepend(card);
+      pushHistory(item);
+    }
+
+    const HIST_KEY = 'airgrab.history';
+    function pushHistory(item) {
+      const rec = { name: item.name, size: item.size, ts: Date.now() };
+      const list = JSON.parse(localStorage.getItem(HIST_KEY) || '[]');
+      list.unshift(rec);
+      localStorage.setItem(HIST_KEY, JSON.stringify(list.slice(0, 20)));
+      renderHistory(list);
+    }
+    function renderHistory(list) {
+      historyEl.innerHTML = list.map((r) =>
+        `<li>${r.name} · ${fmt(r.size)} · ${new Date(r.ts).toLocaleTimeString()}</li>`).join('');
+    }
+    renderHistory(JSON.parse(localStorage.getItem(HIST_KEY) || '[]'));
+
+    // — auto network link: same public IP = same room, no codes on load ————
+    (async function bootRelay() {
+      try {
+        const net = await detectNetworkRoom();
+        $('net-note').textContent = `Network room ${net.room} (${net.label}) — waiting for a sender…`;
+        const rt = createRelayTransport({ url: relayUrl(), room: net.room });
+        routes.push(rt);
+        await rt.open('receiver', { onMessage });
+      } catch (err) {
+        $('net-note').textContent = 'Network link unavailable — same-PC tabs still work.';
+      }
+    })();
+  </script>
+</body>
+</html>
