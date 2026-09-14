@@ -192,11 +192,36 @@
       },
       onDrop: (p) => {
         sendToAll(dropMsg(p.id));
-        toast(`open fist sensed here — pulling ${p.name}`, 'ok');
+        toast(`open palm sensed here — pulling ${p.name}`, 'ok');
         incoming.textContent = `drop requested — receiving ${p.name}…`;
       },
-      onDone: () => clearPreview(),
+      onDone: () => {
+        pendingDrop = false;
+        clearPreview();
+      },
     });
+
+    // — drop latch: if the user's open palm was already over the laptop when the
+    //   grab arrives, drop the instant it lands (no fist-first requirement) ———
+    let pendingDrop = false;
+    let palmSeen = false;
+    function triggerDrop() {
+      if (rfsm.state === 'idle') { pendingDrop = true; return; }
+      const res = rfsm.requestDrop();   // 'drop' | 're-drop' | 'nothing'
+      if (res === 'drop' || res === 'nothing') pendingDrop = false;
+    }
+    function maybeLatchPalm(s) {
+      if (s === 'palm') {
+        if (!palmSeen) {                     // palm edge (open->…): fire once
+          palmSeen = true;
+          if (rfsm.state === 'idle') pendingDrop = true;   // grab not here yet — latch
+          else triggerDrop();
+        }
+      } else {
+        palmSeen = false;
+        pendingDrop = false;
+      }
+    }
 
     const routes = [];
     const sendToAll = (msg) => { for (const r of routes) { try { r.send(msg); } catch { /* not open yet */ } } };
@@ -221,32 +246,40 @@
           : "Waiting for this network's sender to open its page…";
         if (n) setStatus(true);
       } else if (msg.t === 'relay-closed') {
-        $('net-note').textContent = 'Network link lost — same-PC tabs still work.';
+        $('net-note').textContent = 'Network link lost — reconnecting…';
+      } else if (msg.t === 'relay-reopen') {
+        $('net-note').textContent = 'Network link restored.';
+        announce();   // re-announce camera so the sender re-sends holding if still held
       } else if (msg.t === 'holding') {
         rfsm.holding(msg);
+        if (pendingDrop) { pendingDrop = false; rfsm.requestDrop(); }   // palm was already committed
       } else if (msg.t === 'nothing-held') {
         if (rfsm.state !== 'idle') rfsm.done();
         toast('sender has nothing held — grab first', 'err');
       } else if (msg.t === 'transfer-start') {
-        incomingItem = { ...msg, parts: new Array(msg.parts), received: 0 };
+        incomingItem = { ...msg, parts: new Array(msg.parts), received: 0, done: false };
         progress.style.display = 'block';
         progress.firstElementChild.style.width = '0';
         incoming.textContent = `incoming: ${msg.name} (${fmt(msg.size)})…`;
       } else if (msg.t === 'transfer-chunk') {
-        if (!incomingItem || incomingItem.id !== msg.id) return;
+        if (!incomingItem || incomingItem.id !== msg.id || incomingItem.done) return;
         if (!incomingItem.parts[msg.i]) incomingItem.received++;
         incomingItem.parts[msg.i] = msg.data;
         progress.firstElementChild.style.width = Math.round((incomingItem.received / incomingItem.parts.length) * 100) + '%';
+        if (incomingItem.received === incomingItem.parts.length) finalize(incomingItem);   // done before transfer-end? land it anyway
       } else if (msg.t === 'transfer-end') {
-        const it = incomingItem;
-        if (!it || it.id !== msg.id) return;
-        addCard(it);
-        progress.style.display = 'none';
-        incomingItem = null;
-        sendToAll(ackMsg(it.id));
-        rfsm.done();
-        incoming.textContent = `delivered ${it.name} — waiting for the next grab`;
+        if (incomingItem && !incomingItem.done) finalize(incomingItem);   // normal path — everything arrived
       }
+    }
+
+    function finalize(it) {
+      it.done = true;
+      incomingItem = null;
+      addCard(it);
+      progress.style.display = 'none';
+      sendToAll(ackMsg(it.id));
+      rfsm.done();
+      incoming.textContent = `delivered ${it.name} — waiting for the next grab`;
     }
 
     $('start').addEventListener('click', async () => {
@@ -262,6 +295,7 @@
           onState: (s) => {
             chipState.textContent = `gesture: ${s || '—'}`;
             chipState.className = 'chip' + (s === 'fist' ? ' fist' : s === 'palm' ? ' palm' : ' dim');
+            maybeLatchPalm(s);
             if (s === 'fist' && preview.style.display !== 'none') {
               preview.classList.add('pulse');
               if (rfsm.state === 'holding') previewHint.textContent = 'fist seen — now open it to drop!';
@@ -272,7 +306,7 @@
           onEvent: (e) => {
             if (e.type === 'grab') { /* fist closed over the laptop — visual only */ }
             else if (e.type === 'release') {
-              if (rfsm.state !== 'idle') rfsm.cameraRelease();
+              if (rfsm.state !== 'idle' || pendingDrop) triggerDrop();
             }
           },
           onClassify: () => {},

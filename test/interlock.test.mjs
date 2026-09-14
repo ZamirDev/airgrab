@@ -87,6 +87,23 @@ console.log('\nsender FSM — spurious / out-of-order guards');
   check('ownRelease after abort is a no-op', send.length === 0 && s.state === 'idle');
 }
 
+console.log('\nsender FSM — ackLost (no confirmation from laptop)');
+{
+  resetAll();
+  let lost = [];
+  const s = createSenderInterlock({
+    onSend: (pl) => send.push(pl),
+    onLostAck: (pl) => lost.push(pl),
+  });
+  s.setReceiver({ camera: true });
+  s.grab(p);
+  s.dropFromReceiver();
+  check('dropFromReceiver -> sending', s.state === 'sending' && send.length === 1);
+  s.ackLost();
+  check('ackLost -> idle + onLostAck (honest failure)', s.state === 'idle' && lost.length === 1 && lost[0]._id === 'x1');
+  check('extra ackLost is ignored', lost.length === 1);
+}
+
 console.log('\nreceiver FSM');
 {
   let drops = [], holdings = 0, dones = 0;
@@ -99,14 +116,12 @@ console.log('\nreceiver FSM');
   check('holding -> state holding + onHolding', r.state === 'holding' && holdings === 1);
   r.holding({ ...p, _id: 'x9' });
   check('second holding while already holding is ignored', holdings === 1);
-  r.cameraRelease();
-  check('cameraRelease -> waiting, one drop emitted', r.state === 'waiting' && drops.length === 1 && drops[0]._id === 'x1');
-  r.cameraRelease();
-  check('repeat cameraRelease is silent', drops.length === 1);
+  check('requestDrop while idle -> nothing', (() => { const rr = createReceiverInterlock(); return rr.requestDrop() === 'nothing'; })());
+  check('requestDrop from holding -> drop + waiting', r.requestDrop() === 'drop' && r.state === 'waiting' && drops.length === 1 && drops[0]._id === 'x1');
+  check('requestDrop again while waiting -> re-drop (sender re-request)', r.requestDrop() === 're-drop' && drops.length === 2);
   r.done();
   check('done -> idle + onDone once', r.state === 'idle' && dones === 1);
-  r.cameraRelease();
-  check('cameraRelease with nothing held is silent', drops.length === 1);
+  check('requestDrop after done is silent', r.requestDrop() === 'nothing' && drops.length === 2);
   r.holding(p);
   r.done();
   check('holding after done works again', r.state === 'idle' && holdings === 2);

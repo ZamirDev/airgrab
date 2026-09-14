@@ -105,6 +105,12 @@ export function createBroadcastTransport(name = 'airgrab-demo') {
 // one app drives both. Chunk data rides as base64 inside JSON frames — ordered
 // + reliable over TCP (exactly why this never flaked like WebRTC/NAT), decoded
 // back to ArrayBuffer before the state machines ever see it.
+//
+// On connection loss the transport reconnects automatically with capped
+// exponential backoff (1 s → 10 s). On reconnect it re-joins the same room,
+// drops the stale outbound queue, and emits a {t:'relay-reopen'} so pages
+// can re-announce their presence + re-send holding. A {t:'relay-closed'} is
+// emitted on first close, before the reconnect attempt starts.
 
 export function bytesToB64(buf) {
   const bytes = new Uint8Array(buf);
@@ -123,64 +129,96 @@ export function b64ToBytes(b64) {
 }
 
 export function encodeForWire(msg) {
-  if (msg && msg.data instanceof ArrayBuffer) {
-    const { data, ...rest } = msg;
-    return { ...rest, dataB64: bytesToB64(data) };
-  }
-  return msg;
+  if (!msg || typeof msg !== 'object') return msg;
+  const out = { ...msg };
+  if (out.data instanceof ArrayBuffer) { out.dataB64 = bytesToB64(out.data); delete out.data; }
+  if (out.preview instanceof ArrayBuffer) { out.previewB64 = bytesToB64(out.preview); delete out.preview; }
+  return out;
 }
 
 export function decodeFromWire(msg) {
-  if (msg && typeof msg.dataB64 === 'string') {
-    const { dataB64, ...rest } = msg;
-    return { ...rest, data: b64ToBytes(dataB64) };
-  }
-  return msg;
+  if (!msg || typeof msg !== 'object') return msg;
+  const out = { ...msg };
+  if (typeof out.dataB64 === 'string') { out.data = b64ToBytes(out.dataB64); delete out.dataB64; }
+  if (typeof out.previewB64 === 'string') { out.preview = b64ToBytes(out.previewB64); delete out.previewB64; }
+  return out;
 }
 
-export function createRelayTransport({ url, room }) {
+export function createRelayTransport({ url, room, reconnect = true }) {
   let ws = null;
   let onMessage = null;
+  let closed = false;
+  let side = 'sender';
+  let attempt = 0;
+  let hadOpen = false;
+  let retryTimer = null;
   const queue = [];
   const id = 'c-' + Math.random().toString(36).slice(2, 10);
 
+  const flush = () => { while (queue.length && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(queue.shift())); };
+  const scheduleReconnect = () => {
+    if (retryTimer || closed || !reconnect) return;
+    const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
+    attempt += 1;
+    retryTimer = setTimeout(() => { retryTimer = null; connect(); }, delay);
+  };
+
+  function connect() {
+    try { ws = new WebSocket(url); } catch { scheduleReconnect(); return; }
+    ws.onopen = () => {
+      attempt = 0;
+      hadOpen = true;
+      ws.send(JSON.stringify({ t: 'join', room, id, role: side }));
+      flush();
+      if (hadOpen) onMessage?.({ t: 'relay-reopen' });   // first open resolved via Promise; reopens go here
+    };
+    ws.onerror = () => {};
+    ws.onmessage = (ev) => {
+      if (!onMessage) return;
+      let frame;
+      try { frame = JSON.parse(ev.data); } catch { return; }
+      if (frame.t === 'msg') onMessage(decodeFromWire(frame.data));
+      else if (frame.t === 'roster' || frame.t === 'peer' || frame.t === 'peer-left') {
+        onMessage({ t: 'relay-roster', peers: frame.peers || [] });
+      }
+    };
+    ws.onclose = () => {
+      ws = null;
+      queue.length = 0;                              // stale frames are dead — no silent queue
+      if (!closed && hadOpen) onMessage?.({ t: 'relay-closed' });
+      scheduleReconnect();
+    };
+  }
+
   return {
     kind: 'relay',
-    open(side, { onMessage: cb } = {}) {
+    id,
+    get _ws() { return ws; },
+    open(s, { onMessage: cb } = {}) {
+      side = s;
       onMessage = cb || null;
+      closed = false;
       return new Promise((resolve, reject) => {
-        try {
-          ws = new WebSocket(url);
-        } catch (e) {
-          reject(e);
-          return;
-        }
-        ws.onopen = () => {
-          ws.send(JSON.stringify({ t: 'join', room, id, role: side }));
-          while (queue.length) ws.send(JSON.stringify(queue.shift()));
-          resolve({ ok: true });
-        };
-        ws.onerror = () => reject(new Error('relay: cannot reach ' + url));
-        ws.onmessage = (ev) => {
-          if (!onMessage) return;
-          let frame;
-          try { frame = JSON.parse(ev.data); } catch { return; }
-          if (frame.t === 'msg') onMessage(decodeFromWire(frame.data));
-          else if (frame.t === 'roster' || frame.t === 'peer' || frame.t === 'peer-left') {
-            onMessage({ t: 'relay-roster', peers: frame.peers || [] });
-          }
-        };
-        ws.onclose = () => onMessage?.({ t: 'relay-closed' });
+        connect();
+        let iv;
+        const fail = setTimeout(() => { clearInterval(iv); reject(new Error('relay: open timeout')); }, 8000);
+        iv = setInterval(() => {
+          if (ws && ws.readyState === WebSocket.OPEN) { clearInterval(iv); clearTimeout(fail); resolve({ ok: true }); }
+        }, 30);
       });
     },
     send(msg) {
+      if (closed) return;
       const frame = { t: 'msg', data: encodeForWire(msg) };
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
       else queue.push(frame);
     },
     close() {
+      closed = true;
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
       try { ws?.close(); } catch { /* ignore */ }
       ws = null;
+      queue.length = 0;
     },
   };
 }

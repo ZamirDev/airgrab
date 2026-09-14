@@ -54,6 +54,7 @@
     .toast { background: var(--ink); color: var(--paper); border-radius: 10px; padding: 10px 12px; font-size: 13px; font-weight: 800; animation: in .25s ease; }
     .toast.ok { background: var(--green); }
     .toast.err { background: var(--red); }
+    .toast.warn { background: #b8860b; }
     @keyframes in { from { transform: translateY(8px); opacity: 0; } }
   </style>
 </head>
@@ -174,7 +175,7 @@
     const fsm = createSenderInterlock({
       onWaitDropStart: () => {
         addLog(`${new Date().toLocaleTimeString()} <b class="wait">WAITING FOR LAPTOP</b> — walk over, open fist`);
-        toast('grab locked — take it to the laptop and open your fist in front of its camera', 'ok');
+        toast('grab locked — keep your fist closed, walk to the laptop, then OPEN your palm in front of its camera', 'ok');
         dropWaitTimer = setTimeout(() => { fsm.cancel(); }, DROP_WINDOW_MS);
       },
       onCancel: () => {
@@ -189,6 +190,11 @@
         toast(`delivered ${p.name} ${fmt(p.size)}`, 'ok');
         addLog(`${new Date().toLocaleTimeString()} <b class="delivered">DELIVERED</b> ${p.name}`);
       },
+      onLostAck: (p) => {
+        clearHold();
+        addLog(`${new Date().toLocaleTimeString()} <b class="wait">NOT CONFIRMED</b> — ${p.name} lost in transit (no ack from the laptop)`);
+        toast('no confirmation from the laptop — is receiver.html open on camera? (auto-capture keeps no copy — grab again)', 'warn');
+      },
     });
 
     function sendTransfer(p) {
@@ -202,7 +208,7 @@
       ackSendTimer = setTimeout(() => {
         if (ackWaiterId === id) {
           ackWaiterId = null;
-          fsm.ack();   // lost-ack backstop: still completes locally
+          fsm.ackLost();   // honest failure — the laptop never confirmed
         }
       }, ACK_TIMEOUT_MS);
     }
@@ -302,7 +308,11 @@ function onMessage(msg) {
         }
       }
       if (msg.t === 'relay-closed') {
-        addLog('network link lost — broadcast (same-PC tabs) still active');
+        addLog('network link lost — reconnecting… (broadcast same-PC tabs still active)');
+      }
+      if (msg.t === 'relay-reopen') {
+        addLog('network link restored');
+        sendToAll({ t: 'hello', side: 'sender' });   // receiver re-arms, re-sends holding if still held
       }
       if (msg.t === 'drop') {
         if (fsm.dropFromReceiver() === 'nothing') sendToAll(nothingHeldMsg(msg.forId));

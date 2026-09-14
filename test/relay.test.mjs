@@ -4,7 +4,7 @@
 import http from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { attachRelay } from '../server/index.js';
-import { splitToChunks, encodeForWire, decodeFromWire, bytesToB64, b64ToBytes } from '../src/transfer.js';
+import { splitToChunks, encodeForWire, decodeFromWire, bytesToB64, b64ToBytes, createRelayTransport } from '../src/transfer.js';
 
 let passed = 0, failed = 0;
 function check(name, ok, detail = '') {
@@ -17,6 +17,7 @@ const rnd = (n) => {
   for (let i = 0; i < n; i++) b[i] = (Math.random() * 256) | 0;
   return b.buffer;
 };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const server = http.createServer();
 const wss = new WebSocketServer({ server });
@@ -74,6 +75,31 @@ check('A is told B left', A.events.some((m) => m.t === 'peer-left' && m.id === '
 console.log('b64 helpers (standalone)');
 const b = rnd(70_000);
 check('bytesToB64 / b64ToBytes round-trip', new Uint8Array(b64ToBytes(bytesToB64(b))).every((v, i) => v === new Uint8Array(b)[i]));
+
+console.log('preview round-trip over relay (encodeForWire / decodeFromWire)');
+const pChunk = { id: 'tid-2', i: 0, total: 1, data: splitToChunks(rnd(16384))[0], preview: rnd(5000) };
+const pw = encodeForWire(pChunk);
+check('data + preview both encoded', typeof pw.dataB64 === 'string' && typeof pw.previewB64 === 'string');
+const pd = decodeFromWire(pw);
+check('data + preview decode back identically', new Uint8Array(pd.data).every((v, i) => v === new Uint8Array(pChunk.data)[i]) && new Uint8Array(pd.preview).every((v, i) => v === new Uint8Array(pChunk.preview)[i]));
+
+console.log('relay reconnect (transport-level reconnect after socket drop)');
+const reconnRoom = 'ag-reconn-test';
+const r1 = createRelayTransport({ url, room: reconnRoom });
+const r2 = createRelayTransport({ url, room: reconnRoom });
+const r1Ev = [];
+await r1.open('sender', { onMessage: (m) => r1Ev.push(m) });
+await r2.open('receiver', { onMessage: () => {} });
+r2.send({ t: 'hello', poke: 1 });
+await sleep(350);
+check('r1 got initial poke before drop', r1Ev.some((m) => m.t === 'hello' && m.poke === 1));
+const r1ws = r1._ws;
+r1ws.close();   // simulate phone network drop — transport will reconnect
+await sleep(1800);   // backoff 1 s + join round-trip
+r2.send({ t: 'hello', poke: 2 });
+await sleep(400);
+check('r1 reconnected and received poke2', r1Ev.some((m) => m.t === 'hello' && m.poke === 2));
+r1.close(); r2.close();
 
 relay.stop();
 wss.close();

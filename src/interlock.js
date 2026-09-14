@@ -15,8 +15,9 @@ export const ACK_TIMEOUT_MS = 5000;   // lose-ack backstop for the sender
 //                       ->(ownRelease, camera) -> waitingDrop ->(drop)-> sending
 //                                                      ->(cancel after window)-> idle
 // sending ->(ack)-> idle
+// sending ->(ackLost)-> idle   (no confirmation from the laptop — honest failure)
 
-export function createSenderInterlock({ onSend, onWaitDropStart, onCancel, onDone } = {}) {
+export function createSenderInterlock({ onSend, onWaitDropStart, onCancel, onDone, onLostAck } = {}) {
   let state = 'idle';            // idle | holding | waitingDrop | sending
   let hold = null;
   let flying = null;
@@ -91,14 +92,26 @@ export function createSenderInterlock({ onSend, onWaitDropStart, onCancel, onDon
       flying = null;
       onDone?.(p);
     },
+
+    ackLost() {
+      if (state !== 'sending') return;
+      state = 'idle';
+      const p = flying;
+      flying = null;
+      onLostAck?.(p);
+    },
   };
 }
 
 // —— RECEIVER ---------------------------------------------------------------
-// idle ->(holding msg)-> holding ->(own fist->palm)-> waiting ->(transfer done)-> idle
+// idle ->(holding msg)-> holding ->(fist->open sensed)-> waiting ->(transfer done)-> idle
 //
 // holding	the sender told us a grab is in flight (preview ghost shows)
-// cameraRelease	our camera saw the open fist: emit the drop request (once)
+// requestDrop	our camera saw the open fist (or an open palm while a grab is
+//              in flight): send the drop request. Returns 'drop' if it moved
+//              holding->waiting, 're-drop' if we were already waiting (the user
+//              opened the palm again — remind the sender), 'nothing' if idle
+//              (the grab hadn't arrived yet — the page latches a pending drop).
 // done		transfer landed: back to idle
 
 export function createReceiverInterlock({ onHolding, onDrop, onDone } = {}) {
@@ -116,11 +129,19 @@ export function createReceiverInterlock({ onHolding, onDrop, onDone } = {}) {
       onHolding?.(payload);
     },
 
-    cameraRelease() {
-      if (state !== 'holding') return;
-      state = 'waiting';
-      const p = held;
-      onDrop?.(p);
+    requestDrop() {
+      if (state === 'holding') {
+        state = 'waiting';
+        const p = held;
+        onDrop?.(p);
+        return 'drop';
+      }
+      if (state === 'waiting') {
+        const p = held;
+        onDrop?.(p);
+        return 're-drop';
+      }
+      return 'nothing';
     },
 
     done() {
