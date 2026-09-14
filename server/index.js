@@ -116,7 +116,7 @@ export function attachRelay(wss) {
     if (p.t === 'join') join(ws, p);
     else if (p.t === 'msg') {
       if (!ws.meta) return;
-      broadcast(ws.meta.room, { t: 'msg', from: ws.meta.id, data: p.data ?? null });
+      broadcast(ws.meta.room, { t: 'msg', from: ws.meta.id, data: p.data ?? null }, ws);
     }
   }
   function prune() {

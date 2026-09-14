@@ -65,6 +65,7 @@ const got = A.events
 check('B->A chunk round-trips identically', got.length === 1 &&
   new Uint8Array(got[0].data).every((v, i) => v === new Uint8Array(chunk.data)[i]) &&
   got[0].id === 'tid-1');
+check('sender B is NOT echoed its own msg', !B.events.some((m) => m.t === 'msg' && m.from === 'b'));
 
 B.close();
 await new Promise((r) => setTimeout(r, 120));
